@@ -1,0 +1,219 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Socket.IO chat</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { font: 13px Helvetica, Arial; }
+      form { background: #000; padding: 3px; position: fixed; bottom: 0; width: 100%; }
+      form input { border: 0; padding: 10px; width: 90%; margin-right: .5%; }
+      form button { width: 9%; background: rgb(130, 224, 255); border: none; padding: 10px; }
+      #messages { list-style-type: none; margin: 0; padding: 0; }
+      #messages li { padding: 5px 10px; }
+      #messages li:nth-child(odd) { background: #eee; }
+      #messages { margin-bottom: 40px }
+      #video-grid {
+        display: none;
+        grid-template-columns: repeat(auto-fill, 400px);
+        grid-auto-rows: 400px;
+      }
+
+      video {
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+    <!-- <script src="main.js" type="module"></script> -->
+  </head>
+  <body>
+    <ul id="messages"></ul>
+    <form action="">
+      <input id="m" autocomplete="off" /><button>Send</button>
+    </form>
+
+
+    <!---------------for video ---------------------------->
+
+    <div id="video-grid">
+      <video playsinline autoplay muted id="local-video"></video>
+      <video playsinline autoplay id="remote-video"></video>
+    </div>
+  
+    <!-- Input to send messages -->
+    <div>
+      <span style="font-weight: bold">Message: </span>
+      <input type="text" id="message-input" title="Message to Send!">
+      <button id="message-button">Send</button>
+    </div>
+  
+    <!-- Area to Print Images -->
+    <div class="messages"></div>
+
+
+    <!---------------for video ---------------------------->
+    <script src="https://cdn.socket.io/socket.io-1.2.0.js"></script>
+    <script src="https://code.jquery.com/jquery-1.11.1.js"></script>
+    <script>
+      $(function () {
+        var socket = io.connect('http://127.0.0.1:3000/');
+        $('form').submit(function(){
+          socket.emit('chat message', $('#m').val());
+          $('#m').val('');
+          return false;
+        });
+        socket.on('chat message', function(msg){
+          $('#messages').append($('<li>').text(msg));
+          window.scrollTo(0, document.body.scrollHeight);
+        });
+      });
+    </script>
+    <script>
+      console.log('Main JS!');
+
+// Map All HTML Elements
+const videoGrid = document.getElementById('video-grid');
+const messagesEl = document.querySelector('.messages');
+const messageInput = document.getElementById('message-input');
+const sendButton = document.getElementById('message-button');
+const localVideo = document.getElementById('local-video');
+const remoteVideo = document.getElementById('remote-video');
+
+const logMessage = (message) => {
+  const newMessage = document.createElement('div');
+  newMessage.innerText = message;
+  messagesEl.appendChild(newMessage);
+};
+// Open Camera To Capture Audio and Video
+navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+  .then(stream => {
+    // Show My Video
+    videoGrid.style.display = 'grid';
+    localVideo.srcObject = stream;
+
+    // Start a Peer Connection to Transmit Stream
+    initConnection(stream);
+  })
+  .catch(error => console.log(error));
+
+  const initConnection = (stream) => {
+    console.log('mahesh 1')
+    const socket = io('http://127.0.0.1:3000/');
+    let localConnection;
+    let remoteConnection;
+    let localChannel;
+    let remoteChannel;
+  
+    // Start a RTCPeerConnection to each client
+    socket.on('other-users', (otherUsers) => {
+      // Ignore when not exists other users connected
+      console.log('mahesh 00')
+      if (!otherUsers || !otherUsers.length) return;
+  
+      const socketId = otherUsers[0];
+  
+      // Ininit peer connection
+      localConnection = new RTCPeerConnection();
+  
+      // Add all tracks from stream to peer connection
+      stream.getTracks().forEach(track => localConnection.addTrack(track, stream));
+  
+      // Send Candidtates to establish a channel communication to send stream and data
+      localConnection.onicecandidate = ({ candidate }) => {
+        candidate && socket.emit('candidate', socketId, candidate);
+      };
+    
+      // Receive stream from remote client and add to remote video area
+      localConnection.ontrack = ({ streams: [ stream ] }) => {
+        remoteVideo.srcObject = stream;
+      };
+  
+      // Start the channel to chat
+      localChannel = localConnection.createDataChannel('chat_channel');
+      console.log('mahesh 2')
+      // Function Called When Receive Message in Channel
+      localChannel.onmessage = (event) => logMessage(`Receive: ${event.data}`);
+      // Function Called When Channel is Opened
+      localChannel.onopen = (event) => logMessage(`Channel Changed: ${event.type}`);
+      // Function Called When Channel is Closed
+      localChannel.onclose = (event) => logMessage(`Channel Changed: ${event.type}`);
+  
+      // Create Offer, Set Local Description and Send Offer to other users connected
+      localConnection
+        .createOffer()
+        .then(offer => localConnection.setLocalDescription(offer))
+        .then(() => {
+          socket.emit('offer', socketId, localConnection.localDescription);
+        });
+    });
+  
+    // Receive Offer From Other Client
+    socket.on('offer', (socketId, description) => {
+      // Ininit peer connection
+      remoteConnection = new RTCPeerConnection();
+  
+      // Add all tracks from stream to peer connection
+      stream.getTracks().forEach(track => remoteConnection.addTrack(track, stream));
+  
+      // Send Candidtates to establish a channel communication to send stream and data
+      remoteConnection.onicecandidate = ({ candidate }) => {
+        candidate && socket.emit('candidate', socketId, candidate);
+      };
+    
+      // Receive stream from remote client and add to remote video area
+      remoteConnection.ontrack = ({ streams: [ stream ] }) => {
+        remoteVideo.srcObject = stream;
+      };
+  
+      // Chanel Received
+      remoteConnection.ondatachannel = ({ channel }) => {
+        // Store Channel
+        remoteChannel = channel;
+  
+        // Function Called When Receive Message in Channel
+        remoteChannel.onmessage = (event) => logMessage(`Receive: ${event.data}`);
+        // Function Called When Channel is Opened
+        remoteChannel.onopen = (event) => logMessage(`Channel Changed: ${event.type}`);
+        // Function Called When Channel is Closed
+        remoteChannel.onclose = (event) => logMessage(`Channel Changed: ${event.type}`);
+      }
+  
+      // Set Local And Remote description and create answer
+      remoteConnection
+        .setRemoteDescription(description)
+        .then(() => remoteConnection.createAnswer())
+        .then(answer => remoteConnection.setLocalDescription(answer))
+        .then(() => {
+          socket.emit('answer', socketId, remoteConnection.localDescription);
+        });
+    });
+  
+    // Receive Answer to establish peer connection
+    socket.on('answer', (description) => {
+      localConnection.setRemoteDescription(description);
+    });
+  
+    // Receive candidates and add to peer connection
+    socket.on('candidate', (candidate) => {
+      // GET Local or Remote Connection
+      const conn = localConnection || remoteConnection;
+      conn.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+  
+    // Map the 'message-button' click
+    sendButton.addEventListener('click', () => {
+      // GET message from input
+      const message = messageInput.value;
+      // Clean input
+      messageInput.value = '';
+      // Log Message Like Sended
+      logMessage(`Send: ${message}`);
+  
+      // GET the channel (can be local or remote)
+      const channel = localChannel || remoteChannel;
+      // Send message. The other client will receive this message in 'onmessage' function from channel
+      channel.send(message);
+    });
+  }
+    </script>
+  </body>
+</html>
